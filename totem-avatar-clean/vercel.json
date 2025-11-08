@@ -1,12 +1,15 @@
 {
-  "version": 2,
-  "builds": [
-    { "src": "public/**", "use": "@vercel/static" },
-    { "src": "api/*.js", "use": "@vercel/node" }
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "rewrites": [
+    { "source": "/", "destination": "/public/index.html" }
   ],
-  "routes": [
-    { "src": "^/api/(.*)$", "dest": "/api/$1" },
-    { "src": "^/$", "dest": "/public/index.html" },
-    { "src": "^(.*)$", "dest": "/public$1" }
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    }
   ]
 }
