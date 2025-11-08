@@ -1,0 +1,17 @@
+{
+  "name": "totem-avatar-clean",
+  "version": "1.0.0",
+  "private": true,
+  "main": "server.js",
+  "license": "MIT",
+  "scripts": {
+    "dev": "NODE_ENV=development node server.js",
+    "start": "NODE_ENV=production node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0"
+  }
+}

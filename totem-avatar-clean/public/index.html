@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Totem Avatar: voce → ChatGPT → HeyGen</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+  </head>
+  <body class="bg-neutral-900 text-neutral-100 p-6">
+    <h1 class="text-xl font-bold mb-4">Totem Avatar: voce → ChatGPT → HeyGen</h1>
+
+    <div class="flex gap-3 items-center">
+      <button id="startBtn" class="px-4 py-2 bg-green-600 rounded">Start</button>
+      <button id="stopBtn" class="px-4 py-2 bg-red-600 rounded">Stop</button>
+    </div>
+
+    <div class="mt-4 flex gap-6">
+      <video id="videoEl" class="w-[360px] h-[640px] bg-black" autoplay></video>
+
+      <div class="flex-1">
+        <div class="mb-3">
+          <input id="inputText" class="w-80 p-2 text-black" placeholder="Scrivi testo…" />
+          <button id="talkBtn" class="px-3 py-2 bg-blue-600 rounded">Talk (LLM HEYGEN)</button>
+          <button id="repeatBtn" class="px-3 py-2 bg-purple-600 rounded">Repeat</button>
+        </div>
+        <div class="mb-3">
+          <button id="micBtn" class="px-4 py-2 bg-yellow-400 text-black font-semibold rounded">
+            🎤 Parla (microfono)
+          </button>
+          <span id="micState" class="ml-2 opacity-80"></span>
+        </div>
+        <pre id="log" class="bg-neutral-800 p-3 rounded h-64 overflow-auto text-sm"></pre>
+      </div>
+    </div>
+
+    <script>
+      const logEl = document.getElementById("log");
+      const videoEl = document.getElementById("videoEl");
+      const micState = document.getElementById("micState");
+
+      let heygenToken = null;
+      let session = null;
+      let room = null;
+      let mediaStream = null;
+      let env = null;
+
+      const log = (m) => {
+        logEl.textContent += m + "\n";
+        logEl.scrollTop = logEl.scrollHeight;
+        console.log(m);
+      };
+
+      async function getEnv() {
+        env = await fetch("/env.json").then((r) => r.json());
+        log("ENV ok: " + JSON.stringify(env));
+      }
+
+      async function getHeygenToken() {
+        const r = await fetch("/api/token", { method: "POST" });
+        const j = await r.json();
+        if (!j.token) throw new Error("Token HeyGen mancante");
+        return j.token;
+      }
+
+      async function start() {
+        try {
+          log("Avvio…");
+          if (!env) await getEnv();
+
+          heygenToken = await getHeygenToken();
+          log("Token sessione OK");
+
+          // Crea sessione
+          const rNew = await fetch("https://api.heygen.com/v1/streaming.new", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${heygenToken}`,
+            },
+            body: JSON.stringify({
+              version: "v2",
+              avatar_name: env.DEFAULT_AVATAR_NAME,
+              quality: "high",
+            }),
+          });
+          const jNew = await rNew.json();
+          session = jNew.data;
+          log("Sessione creata: " + session.session_id);
+
+          // Start streaming
+          await fetch("https://api.heygen.com/v1/streaming.start", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${heygenToken}`,
+            },
+            body: JSON.stringify({ session_id: session.session_id }),
+          });
+          log("HeyGen: streaming avviato");
+
+          // LiveKit
+          room = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+          mediaStream = new MediaStream();
+          room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+            if (track.kind === "video" || track.kind === "audio") {
+              mediaStream.addTrack(track.mediaStreamTrack);
+              videoEl.srcObject = mediaStream;
+            }
+          });
+          await room.connect(session.url, session.access_token);
+          log("✅ LiveKit connesso — streaming pronto");
+        } catch (e) {
+          log("BOOT ERROR: " + e.message);
+          alert("Errore avvio: " + e.message);
+        }
+      }
+
+      async function stop() {
+        try {
+          if (room) {
+            room.disconnect();
+            room = null;
+          }
+          videoEl.srcObject = null;
+          heygenToken = null;
+          session = null;
+          log("Sessione chiusa.");
+        } catch (e) {
+          log("Errore stop: " + e.message);
+        }
+      }
+
+      async function sendToAvatar(text, mode = "talk") {
+        if (!session) return alert("Avvia prima lo streaming (Start)");
+        await fetch("https://api.heygen.com/v1/streaming.task", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${heygenToken}`,
+          },
+          body: JSON.stringify({
+            session_id: session.session_id,
+            text,
+            task_type: mode, // "talk" o "repeat"
+          }),
+        });
+        log(`[→ AVATAR ${mode}] ${text}`);
+      }
+
+      // Mic → Web Speech → /api/chat → avatar parla
+      function speechToText() {
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) {
+          alert("SpeechRecognition non supportata su questo browser.");
+          return null;
+        }
+        const rec = new SR();
+        rec.lang = "it-IT";
+        rec.interimResults = false;
+        rec.maxAlternatives = 1;
+        return rec;
+      }
+
+      async function askChatGPT(text) {
+        const r = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const j = await r.json();
+        if (j.error) throw new Error(j.error);
+        return j.text;
+      }
+
+      document.getElementById("startBtn").onclick = start;
+      document.getElementById("stopBtn").onclick = stop;
+
+      document.getElementById("talkBtn").onclick = async () => {
+        const t = document.getElementById("inputText").value.trim();
+        if (!t) return;
+        await sendToAvatar(t, "talk");
+      };
+      document.getElementById("repeatBtn").onclick = async () => {
+        const t = document.getElementById("inputText").value.trim();
+        if (!t) return;
+        await sendToAvatar(t, "repeat");
+      };
+
+      document.getElementById("micBtn").onclick = async () => {
+        const rec = speechToText();
+        if (!rec) return;
+        micState.textContent = "Sto ascoltando…";
+        rec.start();
+
+        rec.onresult = async (ev) => {
+          const said = ev.results[0][0].transcript;
+          micState.textContent = `Tu: "${said}"`;
+          log(`[MIC] ${said}`);
+
+          try {
+            const answer = await askChatGPT(said);
+            log(`[GPT] ${answer}`);
+            await sendToAvatar(answer, "talk");
+          } catch (e) {
+            log("CHAT ERROR: " + e.message);
+            alert("Errore chat: " + e.message);
+          }
+        };
+        rec.onerror = (e) => {
+          micState.textContent = "Errore microfono";
+          log("MIC ERROR: " + e.error);
+        };
+        rec.onend = () => {
+          if (!micState.textContent.startsWith("Tu:")) micState.textContent = "Microfono fermo";
+        };
+      };
+    </script>
+  </body>
+</html>
