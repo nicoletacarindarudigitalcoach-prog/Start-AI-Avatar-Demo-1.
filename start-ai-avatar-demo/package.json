@@ -1,0 +1,8 @@
+{
+  "name": "start-ai-avatar-demo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo \"Use Vercel for serverless\""
+  }
+}
